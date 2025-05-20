@@ -1,0 +1,62 @@
+name: Manual Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g. 1.0.0)'
+        required: true
+        default: ''
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        
+      - name: Setup Java
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          
+      - name: Setup Clojure Tools
+        uses: DeLaGuardo/setup-clojure@12.1
+        with:
+          cli: latest
+          
+      - name: Run tests
+        run: clojure -T:build test
+        
+      - name: Update version in build.clj
+        run: |
+          sed -i "s/^(def version \".*\")/(def version \"${{ github.event.inputs.version }}\")/" build.clj
+          
+      - name: Build JAR
+        run: clojure -T:build ci
+        
+      - name: Rename JAR file
+        run: |
+          mkdir -p dist
+          JARFILE=$(find target -name "*.jar" | head -n 1)
+          cp $JARFILE dist/figma-style-exporter-${{ github.event.inputs.version }}.jar
+        
+      - name: Create Release
+        id: create_release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ github.event.inputs.version }}
+          name: Release v${{ github.event.inputs.version }}
+          files: |
+            dist/figma-style-exporter-${{ github.event.inputs.version }}.jar
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
