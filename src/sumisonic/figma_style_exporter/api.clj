@@ -1,6 +1,24 @@
 (ns sumisonic.figma-style-exporter.api
   (:require [clj-http.client :as http]
-            [cheshire.core :as json]))
+            [cheshire.core :as json]
+            [clojure.string :as str]))
+
+(def nodes-batch-size
+  "Maximum number of node IDs sent in a single /nodes request.
+
+   The Figma API rejects long query strings with HTTP 414 (URI Too Long).
+   Measured against a real file: 713 ids (~7.5KB of query) fails, 200 ids (~2KB)
+   succeeds. 100 keeps a wide safety margin and still keeps the request count low."
+  100)
+
+(defn batch-ids
+  "Splits node IDs into batches that keep each request's query string short enough.
+   Args:
+     ids - Sequence of node IDs
+   Returns:
+     Sequence of ID batches (each at most nodes-batch-size long)"
+  [ids]
+  (partition-all nodes-batch-size ids))
 
 (defn auth-headers
   "Creates authorization headers for Figma API requests.
@@ -44,11 +62,14 @@
   (if (seq ids)
     (try
       (let [url (str "https://api.figma.com/v1/files/" filekey "/nodes")
-            params {:headers (auth-headers token),
-                    :query-params {"ids" (clojure.string/join "," ids)}}
-            res (http/get url params)
-            body (json/parse-string (:body res))]
-        {:ok (get body "nodes")})
+            fetch-batch (fn [batch]
+                          (let [params {:headers (auth-headers token),
+                                        :query-params {"ids" (str/join "," batch)}}
+                                res (http/get url params)
+                                body (json/parse-string (:body res))]
+                            (get body "nodes")))]
+        ;; Split into batches so the query string stays under the API's URI length limit.
+        {:ok (reduce merge {} (map fetch-batch (batch-ids ids)))})
       (catch Exception e
         {:error {:type :api-error,
                  :message (.getMessage e),

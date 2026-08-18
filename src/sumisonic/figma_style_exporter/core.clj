@@ -260,15 +260,20 @@
               (println "Required: FIGMA_TOKEN and FIGMA_FILE_ID/FILE_KEY")
               (System/exit 1))
 
-            (when-let [{:keys [structured-styles style-count]}
-                       (:ok (process-styles token
-                                            filekey
-                                            breakpoints
-                                            languages
-                                            require-breakpoint
-                                            require-language))]
-              (let [json-str (json/generate-string structured-styles {:pretty true})]
-                (write-output json-str style-count output-path))))))
+            ;; Surface failures instead of silently exiting 0 without writing anything.
+            (let [result (process-styles token
+                                         filekey
+                                         breakpoints
+                                         languages
+                                         require-breakpoint
+                                         require-language)]
+              (if-let [{:keys [structured-styles style-count]} (:ok result)]
+                (let [json-str (json/generate-string structured-styles {:pretty true})]
+                  (write-output json-str style-count output-path))
+                (binding [*out* *err*]
+                  (println "Error: failed to export text styles")
+                  (println (pr-str (:error result)))
+                  (System/exit 1)))))))
 
       "color"
       (let [parsed-opts (parse-opts sub-args

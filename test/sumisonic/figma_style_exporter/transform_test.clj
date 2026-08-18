@@ -1,5 +1,6 @@
 (ns sumisonic.figma-style-exporter.transform-test
   (:require [clojure.test :refer :all]
+            [sumisonic.figma-style-exporter.api :as api]
             [sumisonic.figma-style-exporter.transform :as transform]
             [sumisonic.figma-style-exporter.constants :as const]))
 
@@ -105,3 +106,23 @@
           result (transform/color-styles->simple-map color-map)]
       (is (= {"foo" {:color {"r" 0.4, "g" 0.5, "b" 0.6, "a" 1.0}}} result))
       (is (not (contains? result "bar"))))))
+
+;; --- /nodes request batching ------------------------------------------------
+;; The Figma /nodes endpoint takes node IDs in the query string, so a large file
+;; overflows the URI length limit and fails with HTTP 414 (URI Too Long).
+;; Measured against a real file: 713 ids (~7.5KB) fails, 200 ids (~2KB) succeeds.
+;; These tests pin the batch size and verify that batching preserves every id.
+
+(deftest batch-ids-test
+  (testing "keeps a single batch when the id count is within the limit"
+    (is (= [["a" "b"]] (map vec (api/batch-ids ["a" "b"])))))
+  (testing "splits into multiple batches beyond the limit"
+    (let [ids (map #(str "id" %) (range 250))
+          batches (api/batch-ids ids)]
+      (is (= 3 (count batches)))
+      (is (every? #(<= (count %) api/nodes-batch-size) batches))
+      (is (= (vec ids) (vec (apply concat batches))))))
+  (testing "returns nothing for an empty id sequence"
+    (is (empty? (api/batch-ids []))))
+  (testing "keeps the batch size safely under the URI length limit"
+    (is (<= api/nodes-batch-size 200))))
