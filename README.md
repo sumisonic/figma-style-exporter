@@ -13,7 +13,8 @@ This tool retrieves style information from Figma files, converts it to CSS-compa
 - Breakpoint and responsive style support
 - Multilingual support (BCP 47 language tags)
 - Style structure and consistency validation
-- File output or console output
+- Style selection by name prefix (e.g. only the styles of one year)
+- File output or console output (only the JSON goes to stdout)
 
 ## Requirements
 
@@ -37,6 +38,13 @@ java -jar figma-style-exporter.jar text -B -L -o text.json
 # When targeting specific breakpoints and languages
 # Note: The -B -L flags must also be used
 java -jar figma-style-exporter.jar text -B -L -b sm,md -l en,ja -o text.json
+
+# When exporting only the styles named under "2026/" (e.g. 2026/sm/Body)
+java -jar figma-style-exporter.jar text -B -b sm,md --prefix 2026/ -o text.json
+java -jar figma-style-exporter.jar color --prefix 2026/ -o color.json
+
+# Without -o, stdout carries only the JSON; messages go to stderr
+java -jar figma-style-exporter.jar color > color.json
 ```
 
 ## Usage Instructions
@@ -61,6 +69,7 @@ java -jar figma-style-exporter.jar text [options]
 - `-l, --languages LANG1,LANG2,...` – Comma-separated list of languages (e.g. `en,ja,zh`)
 - `-B, --require-breakpoint` – Require breakpoints in style names
 - `-L, --require-language` – Require languages in style names
+- `--prefix PREFIX` – Only export styles whose name starts with `PREFIX`, and remove `PREFIX` from the exported names (see [Selecting Styles by Name Prefix](#selecting-styles-by-name-prefix))
 - `-o, --output PATH` – Output file path (outputs to stdout if not specified)
 - `-h, --help` – Display help
 
@@ -71,8 +80,51 @@ java -jar figma-style-exporter.jar color [options]
 ```
 
 **Options**
+- `--prefix PREFIX` – Only export styles whose name starts with `PREFIX`, and remove `PREFIX` from the exported names (see [Selecting Styles by Name Prefix](#selecting-styles-by-name-prefix))
 - `-o, --output PATH` – Output file path (outputs to stdout if not specified)
 - `-h, --help` – Display help
+
+### Output and Messages
+
+The JSON is written to the file given with `-o`, or to stdout when `-o` is not given.
+Progress messages, the summary line and errors are written to stderr, so stdout carries nothing but the JSON and can be redirected or piped as is:
+
+```sh
+java -jar figma-style-exporter.jar text -B -o text.json  # JSON in text.json
+java -jar figma-style-exporter.jar text -B > text.json   # the same JSON through stdout
+java -jar figma-style-exporter.jar color | jq 'keys'     # stdout is valid JSON
+```
+
+On an error, the command exits with status 1 and writes no JSON.
+`--help` and `--version` print to stdout.
+
+### Selecting Styles by Name Prefix
+
+A single Figma file can hold the styles of several years side by side, for example newer styles named under the year and older styles without it:
+
+```
+2026/sm/Body
+2026/md/Body
+2025/sm/Body
+sm/Body
+```
+
+Exporting this file as is mixes the years, and for text styles it stops with an error, because the names follow different patterns (see [Text Style Naming Conventions](#text-style-naming-conventions)).
+Use `--prefix` to export one year only:
+
+```sh
+java -jar figma-style-exporter.jar text -B -b sm,md --prefix 2026/ -o text.json
+```
+
+This keeps `2026/sm/Body` and `2026/md/Body`, removes `2026/` from their names, and then reads the breakpoints from what is left (`sm/Body` and `md/Body`).
+The output has a single style named `Body` with its `sm` and `md` values. `2025/sm/Body` and `sm/Body` are left out.
+
+- The prefix is matched literally at the start of the name. It is not a regular expression, so `.` and `*` are ordinary characters.
+- Include the separator in the prefix: `--prefix 2026/`. With `--prefix 2026` the names keep their leading `/` (`/sm/Body`).
+- The prefix is removed before the names are split and validated, so it never appears in the output keys.
+- If no style name starts with the prefix, the command exits with an error instead of writing an empty JSON.
+- Without `--prefix`, every style is exported as before.
+- `--prefix` works the same way for color styles: `color --prefix 2026/` exports `2026/Primary` as `Primary`.
 
 ## Output Format
 

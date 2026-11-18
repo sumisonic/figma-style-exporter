@@ -3,7 +3,7 @@
   (:require [clojure.tools.build.api :as b]))
 
 (def lib 'net.clojars.sumisonic/figma-style-exporter)
-(def version "1.0.1")
+(def version "1.1.0")
 (def main 'sumisonic.figma-style-exporter.core)
 (def class-dir "target/classes")
 
