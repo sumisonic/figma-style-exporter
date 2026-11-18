@@ -21,14 +21,16 @@
     (f value)
     result))
 
-(defn handle-error
-  "Handles error information, displays details, and exits the program if an error is present.
+;; Messages go to stderr, so that stdout carries nothing but the JSON when -o is not given.
+
+(defn print-error
+  "Prints error details to stderr.
    Args:
-     result - Result map that may contain an :error
+     error - Error map (with :type, :message, :details) or any other value
    Returns:
-     Original result map unchanged"
-  [result]
-  (when-let [error (:error result)]
+     nil"
+  [error]
+  (binding [*out* *err*]
     (println "Error occurred:")
     (if (map? error)
       (do
@@ -38,7 +40,17 @@
           (println "  Message:" msg))
         (when-let [details (:details error)]
           (println "  Details:" (pr-str details))))
-      (println "  " error))
+      (println "  " error))))
+
+(defn handle-error
+  "Handles error information, displays details, and exits the program if an error is present.
+   Args:
+     result - Result map that may contain an :error
+   Returns:
+     Original result map unchanged"
+  [result]
+  (when-let [error (:error result)]
+    (print-error error)
     (System/exit 1))
   result)
 
@@ -129,24 +141,50 @@
   (if output-path
     (try
       (spit output-path json-str)
-      (println (str "Successfully processed " style-count
-                    " style"
-                    (when (not= style-count 1) "s")
-                    " and saved to: " output-path))
+      (binding [*out* *err*]
+        (println (str "Successfully processed " style-count
+                      " style"
+                      (when (not= style-count 1) "s")
+                      " and saved to: " output-path)))
       true
       (catch Exception e
-        (println (str "Error writing to file: " (.getMessage e)))
+        (binding [*out* *err*]
+          (println (str "Error writing to file: " (.getMessage e))))
         (System/exit 1)))
 
-    ;; Output to stdout if no file specified
+    ;; Output to stdout if no file specified. Only the JSON goes to stdout.
     (do
       (println json-str)
-      (println (str "\nSuccessfully processed "
-                    style-count
-                    " style"
-                    (when (not= style-count 1) "s")
-                    "."))
+      (binding [*out* *err*]
+        (println (str "\nSuccessfully processed "
+                      style-count
+                      " style"
+                      (when (not= style-count 1) "s")
+                      ".")))
       true)))
+
+(defn print-text-settings
+  "Prints the settings the text command runs with, to stderr.
+   Args:
+     require-breakpoint - Boolean flag from -B
+     require-language - Boolean flag from -L
+     breakpoints - Set of valid breakpoints
+     languages - Set of valid languages
+   Returns:
+     nil"
+  [require-breakpoint require-language breakpoints languages]
+  (binding [*out* *err*]
+    (println "Requirements:"
+             (when require-breakpoint "breakpoint")
+             (when require-language "language"))
+    (println "Using breakpoints:" breakpoints)
+    (println "Using languages:" languages)))
+
+(defn- print-missing-env
+  "Prints which environment variables are required, to stderr."
+  []
+  (binding [*out* *err*]
+    (println "Required: FIGMA_TOKEN and FIGMA_FILE_ID/FILE_KEY")))
 
 (defn process-styles
   "Processes Figma styles with validation and transformation.
@@ -270,8 +308,9 @@
 
         ;; Display errors if any occurred during parsing
         (when errors
-          (doseq [error errors]
-            (println error))
+          (binding [*out* *err*]
+            (doseq [error errors]
+              (println error)))
           (System/exit 1))
 
         (when (:help options)
@@ -287,18 +326,13 @@
               require-language (:require-language options)
               breakpoints (:breakpoints options)
               languages (:languages options)
-              prefix (:prefix options)
+              prefix (:prefix options)]
 
-              ;; Debug output
-              _ (println "Requirements:"
-                         (when require-breakpoint "breakpoint")
-                         (when require-language "language"))
-              _ (println "Using breakpoints:" breakpoints)
-              _ (println "Using languages:" languages)]
+          (print-text-settings require-breakpoint require-language breakpoints languages)
 
           (if-not (and token filekey)
             (do
-              (println "Required: FIGMA_TOKEN and FIGMA_FILE_ID/FILE_KEY")
+              (print-missing-env)
               (System/exit 1))
 
             ;; Surface failures instead of silently exiting 0 without writing anything.
@@ -342,7 +376,7 @@
 
           (if-not (and token filekey)
             (do
-              (println "Required: FIGMA_TOKEN and FIGMA_FILE_ID/FILE_KEY")
+              (print-missing-env)
               (System/exit 1))
 
             (when-let [{:keys [color-styles style-count]}
@@ -352,7 +386,8 @@
 
       ;; fallback
       (do
-        (println "Unknown or missing command.")
-        (println "Usage: figma-style-exporter <command> [options]")
-        (println "Commands: text | color")
+        (binding [*out* *err*]
+          (println "Unknown or missing command.")
+          (println "Usage: figma-style-exporter <command> [options]")
+          (println "Commands: text | color"))
         (System/exit 1)))))

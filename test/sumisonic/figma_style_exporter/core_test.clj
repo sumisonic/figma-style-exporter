@@ -1,7 +1,9 @@
 (ns sumisonic.figma-style-exporter.core-test
   (:require [clojure.test :refer :all]
             [clojure.string :as str]
+            [clojure.java.io :as io]
             [clojure.tools.cli :refer [parse-opts]]
+            [cheshire.core :as json]
             [sumisonic.figma-style-exporter.core :as core]
             [sumisonic.figma-style-exporter.constants :as const]
             [sumisonic.figma-style-exporter.fake-figma :as fake]))
@@ -151,3 +153,52 @@
   (testing "the text help and the color help both describe --prefix"
     (is (str/includes? (with-out-str (core/print-help nil)) "--prefix PREFIX"))
     (is (str/includes? (with-out-str (core/print-color-help)) "--prefix PREFIX"))))
+
+;; --- stdout carries only the JSON ------------------------------------------
+
+(defn- capture-streams
+  "Calls f and returns what it wrote to stdout and to stderr."
+  [f]
+  (let [out (java.io.StringWriter.)
+        err (java.io.StringWriter.)
+        value (binding [*out* out, *err* err] (f))]
+    {:value value, :out (str out), :err (str err)}))
+
+(deftest stdout-is-json-only-test
+  (let [styles {"Body" {:fontSize {:sm 14.0}}}
+        json-str (json/generate-string styles {:pretty true})]
+
+    (testing "without -o, stdout is the JSON alone and the summary goes to stderr"
+      (let [{:keys [value out err]} (capture-streams #(core/write-output json-str 1 nil))]
+        (is (true? value))
+        (is (= {"Body" {"fontSize" {"sm" 14.0}}} (json/parse-string out)))
+        (is (= (str json-str "\n") out))
+        (is (str/includes? err "Successfully processed 1 style."))))
+
+    (testing "with -o, the JSON goes to the file and stdout stays empty"
+      (let [file (java.io.File/createTempFile "figma-style-exporter-test" ".json")]
+        (try
+          (let [{:keys [out err]} (capture-streams #(core/write-output json-str 2 (str file)))]
+            (is (= "" out))
+            (is (str/includes? err "Successfully processed 2 styles and saved to: "))
+            (is (= json-str (slurp file))))
+          (finally
+            (io/delete-file file true))))))
+
+  (testing "errors go to stderr"
+    (let [{:keys [out err]} (capture-streams
+                             #(core/print-error {:type :no-styles-match-prefix,
+                                                 :message "No styles start with the prefix \"2027/\"",
+                                                 :details {:prefix "2027/"}}))]
+      (is (= "" out))
+      (is (str/includes? err "Error occurred:"))
+      (is (str/includes? err "Type: :no-styles-match-prefix"))
+      (is (str/includes? err "Message: No styles start with the prefix \"2027/\""))))
+
+  (testing "the text settings go to stderr"
+    (let [{:keys [out err]} (capture-streams
+                             #(core/print-text-settings true false #{"sm"} #{"en"}))]
+      (is (= "" out))
+      (is (str/includes? err "Requirements: breakpoint"))
+      (is (str/includes? err "Using breakpoints: #{sm}"))
+      (is (str/includes? err "Using languages: #{en}")))))
