@@ -43,6 +43,12 @@
   result)
 
 ;; CLI argument definitions
+(def prefix-option
+  "The --prefix option, shared by the text and color commands.
+   An empty value is rejected so that an unset shell variable does not silently export everything."
+  [nil "--prefix PREFIX" "Only export styles whose name starts with PREFIX, and remove PREFIX from their names"
+   :validate [seq "must not be empty"]])
+
 (def cli-options
   [;; Use flags instead of options with values for enable/disable functionality
    ["-B" "--require-breakpoint" "Require breakpoint in style names"]
@@ -60,9 +66,23 @@
        (set (str/split % #",")))
     :default constants/langs]
 
+   prefix-option
+
    ["-o" "--output OUTPUT" "Output file path (default: stdout)"
     :default nil]
    ["-h" "--help" "Display help"]])
+
+(def color-cli-options
+  [prefix-option
+   ["-o" "--output OUTPUT" "Output file path"]
+   ["-h" "--help"]])
+
+(def prefix-help-lines
+  "Help lines for --prefix, shared by the text and color help."
+  ["      --prefix PREFIX          Only export styles whose name starts with PREFIX, and remove"
+   "                               PREFIX from the exported names. PREFIX is matched literally"
+   "                               (not as a regular expression), so include the separator,"
+   "                               e.g. --prefix 2026/. Exits with an error if nothing matches."])
 
 (defn print-help
   "Displays help information.
@@ -80,7 +100,21 @@
   (println "  -L, --require-language       Require language in style names")
   (println "  -b, --breakpoints BP1,BP2,...  Comma-separated list of breakpoints (default: sm,md,lg,xl)")
   (println "  -l, --languages LANG1,LANG2,...  Comma-separated list of languages (default: en,ja,zh,...)")
+  (doseq [line prefix-help-lines]
+    (println line))
   (println "  -o, --output PATH            Output file path (if not specified, outputs to stdout)")
+  (println "  -h, --help                   Display this help message"))
+
+(defn print-color-help
+  "Displays help information for the color command.
+   Returns:
+     nil"
+  []
+  (println "Usage: figma-style-exporter color [options]")
+  (println "Options:")
+  (doseq [line prefix-help-lines]
+    (println line))
+  (println "  -o, --output PATH            Output file path (default: stdout)")
   (println "  -h, --help                   Display this help message"))
 
 (defn write-output
@@ -123,15 +157,20 @@
      languages - Set of valid languages
      require-breakpoint - Boolean flag indicating if breakpoint is required in style names
      require-language - Boolean flag indicating if language is required in style names
+     prefix - Literal style name prefix to select and remove, or nil for every style
    Returns:
      {:ok result-map} on success, or {:error details} on failure"
-  [token filekey breakpoints languages require-breakpoint require-language]
+  [token filekey breakpoints languages require-breakpoint require-language prefix]
   (-> {:ok [token filekey breakpoints languages require-breakpoint require-language]}
-      ;; 1. Fetch style information
+      ;; 1. Fetch style information (only the styles under the prefix, renamed without it).
+      ;;    Errors pass through, so that the API error or the no-match error is reported.
       (>>= (fn [[token filekey _ _ _ _]]
-             {:ok (assoc (styles/collect-text-styles token filekey)
-                         :breakpoints breakpoints
-                         :languages languages)}))
+             (let [collected (styles/collect-text-styles token filekey prefix)]
+               (if (:error collected)
+                 collected
+                 {:ok (assoc collected
+                             :breakpoints breakpoints
+                             :languages languages)}))))
 
       ;; 2. Convert to CSS format
       (>>= (fn [{:keys [ok breakpoints languages]}]
@@ -194,13 +233,14 @@
    Args:
      token - Figma API token
      filekey - Figma file ID
+     prefix - Literal style name prefix to select and remove, or nil for every style
    Returns:
      {:ok {:color-styles ... :style-count N}} or {:error ...}"
-  [token filekey]
+  [token filekey prefix]
   (-> {:ok [token filekey]}
-      ;; Fetch raw color styles
+      ;; Fetch raw color styles (only the styles under the prefix, renamed without it)
       (>>= (fn [[token filekey]]
-             (styles/collect-color-styles token filekey)))
+             (styles/collect-color-styles token filekey prefix)))
       ;; Transform to simplified format
       (>>= (fn [color-styles]
              (let [simple (transform/color-styles->simple-map color-styles)]
@@ -247,6 +287,7 @@
               require-language (:require-language options)
               breakpoints (:breakpoints options)
               languages (:languages options)
+              prefix (:prefix options)
 
               ;; Debug output
               _ (println "Requirements:"
@@ -266,7 +307,8 @@
                                          breakpoints
                                          languages
                                          require-breakpoint
-                                         require-language)]
+                                         require-language
+                                         prefix)]
               (if-let [{:keys [structured-styles style-count]} (:ok result)]
                 (let [json-str (json/generate-string structured-styles {:pretty true})]
                   (write-output json-str style-count output-path))
@@ -276,17 +318,22 @@
                   (System/exit 1)))))))
 
       "color"
-      (let [parsed-opts (parse-opts sub-args
-                                    [["-o" "--output OUTPUT" "Output file path"]
-                                     ["-h" "--help"]])
+      (let [parsed-opts (parse-opts sub-args color-cli-options)
             options (:options parsed-opts)
-            output-path (:output options)]
+            errors (:errors parsed-opts)
+            output-path (:output options)
+            prefix (:prefix options)]
+
+        ;; Stop on unknown options or a missing value, e.g. a mistyped --prefix,
+        ;; instead of silently exporting every color.
+        (when errors
+          (binding [*out* *err*]
+            (doseq [error errors]
+              (println error)))
+          (System/exit 1))
 
         (when (:help options)
-          (println "Usage: figma-style-exporter color [options]")
-          (println "Options:")
-          (println "  -o, --output PATH     Output file path (default: stdout)")
-          (println "  -h, --help            Display this help message")
+          (print-color-help)
           (System/exit 0))
 
         (let [token (System/getenv "FIGMA_TOKEN")
@@ -299,7 +346,7 @@
               (System/exit 1))
 
             (when-let [{:keys [color-styles style-count]}
-                       (:ok (process-colors token filekey))]
+                       (:ok (process-colors token filekey prefix))]
               (let [json-str (json/generate-string color-styles {:pretty true})]
                 (write-output json-str style-count output-path))))))
 
