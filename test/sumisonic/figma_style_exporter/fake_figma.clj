@@ -92,3 +92,17 @@
                            :message "clj-http: status 403",
                            :function :fetch-file-styles-meta}})]
     (f)))
+
+(defn call-with-nodes-error
+  "Calls f while the style list of file is served but every /nodes request fails.
+   Returns:
+     The value of f"
+  [file f]
+  (:result
+   (call-with-file file
+                   #(with-redefs [api/fetch-nodes
+                                  (fn [_ _ _]
+                                    {:error {:type :api-error,
+                                             :message "clj-http: status 500",
+                                             :function :fetch-nodes}})]
+                      (f)))))

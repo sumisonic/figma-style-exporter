@@ -121,6 +121,7 @@ The output has a single style named `Body` with its `sm` and `md` values. `2025/
 
 - The prefix is matched literally at the start of the name. It is not a regular expression, so `.` and `*` are ordinary characters.
 - Include the separator in the prefix: `--prefix 2026/`. With `--prefix 2026` the names keep their leading `/` (`/sm/Body`).
+- The prefix must not be empty and must not start with `-`, so that a missing value (`--prefix -o text.json`) is reported as an error instead of being taken as the prefix.
 - The prefix is removed before the names are split and validated, so it never appears in the output keys.
 - If no style name starts with the prefix, the command exits with an error instead of writing an empty JSON.
 - Without `--prefix`, every style is exported as before.

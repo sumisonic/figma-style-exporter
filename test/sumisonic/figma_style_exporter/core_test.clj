@@ -110,7 +110,28 @@
                                   "2025/Primary" {:color {"r" 0.4, "g" 0.5, "b" 0.6, "a" 1.0}}},
                    :style-count 3}}
              result))
-      (is (= #{"2:1" "2:2" "2:3"} (set node-ids))))))
+      (is (= #{"2:1" "2:2" "2:3"} (set node-ids)))))
+
+  (testing "the calls without a prefix argument, as before 1.1.0, give the same results"
+    (with-redefs [core/handle-error identity]
+      (is (= (:result (export-text fake/single-shape-file nil))
+             (:result (fake/call-with-file
+                       fake/single-shape-file
+                       #(core/process-styles "token" "file" sm-md const/langs true false)))))
+      (is (= (:result (export-colors fake/two-years-file nil))
+             (:result (fake/call-with-file
+                       fake/two-years-file
+                       #(core/process-colors "token" "file"))))))))
+
+(deftest nothing-exportable-test
+  ;; Text styles that lack a property needed for CSS are dropped. When all of them are,
+  ;; process-styles returns {:ok nil}, which -main reports as a failure (exit 1).
+  ;; This is the behavior before 1.1.0, kept as is.
+  (let [file [{:id "1:1", :name "sm/Body", :type "TEXT", :props {"fontSize" 14.0}}
+              {:id "9:1", :name "sm/Caption", :type "TEXT", :remote true}]]
+    (doseq [prefix [nil "sm/"]]
+      (is (= {:ok nil} (:result (export-text file prefix)))
+          (str "prefix " (pr-str prefix))))))
 
 (deftest api-error-test
   ;; Before --prefix, the text export turned an API error into {:ok nil} and lost it.
@@ -129,7 +150,23 @@
              (get-in (with-redefs [core/handle-error identity]
                        (fake/call-with-api-error #(core/process-colors "token" "file" prefix)))
                      [:error :type]))
-          (str "prefix " (pr-str prefix))))))
+          (str "prefix " (pr-str prefix)))))
+
+  (testing "a failing /nodes request is returned as the API error, by text and color"
+    (doseq [prefix [nil "2026/"]]
+      (with-redefs [core/handle-error identity]
+        (is (= :fetch-nodes
+               (get-in (fake/call-with-nodes-error
+                        fake/two-years-file
+                        #(core/process-styles "token" "file" sm-md const/langs true false prefix))
+                       [:error :function]))
+            (str "text, prefix " (pr-str prefix)))
+        (is (= :fetch-nodes
+               (get-in (fake/call-with-nodes-error
+                        fake/two-years-file
+                        #(core/process-colors "token" "file" prefix))
+                       [:error :function]))
+            (str "color, prefix " (pr-str prefix)))))))
 
 (deftest prefix-option-test
   (doseq [[command spec] [["text" core/cli-options] ["color" core/color-cli-options]]]
@@ -145,6 +182,16 @@
     (testing (str command " rejects an empty prefix and a missing value")
       (is (seq (:errors (parse-opts ["--prefix" ""] spec))))
       (is (seq (:errors (parse-opts ["--prefix"] spec)))))
+
+    (testing (str command " rejects a missing value followed by another option")
+      ;; tools.cli takes the next argument as the value even when it is an option.
+      (let [{:keys [options errors]} (parse-opts ["--prefix" "-o" "out.json"] spec)]
+        (is (seq errors))
+        (is (nil? (:prefix options))))
+      (is (seq (:errors (parse-opts ["--prefix" "--help"] spec))))
+      (is (= {:prefix "2026/", :output "out.json"}
+             (select-keys (:options (parse-opts ["--prefix" "2026/" "-o" "out.json"] spec))
+                          [:prefix :output]))))
 
     (testing (str command " reports a mistyped option")
       (is (seq (:errors (parse-opts ["--prefx" "2026/"] spec)))))))

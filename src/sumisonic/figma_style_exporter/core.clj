@@ -57,9 +57,12 @@
 ;; CLI argument definitions
 (def prefix-option
   "The --prefix option, shared by the text and color commands.
-   An empty value is rejected so that an unset shell variable does not silently export everything."
+   An empty value is rejected so that an unset shell variable does not silently export everything.
+   A value starting with \"-\" is rejected too: tools.cli takes the next argument as the value
+   even when it is an option, so `--prefix -o out.json` would otherwise use \"-o\" as the prefix."
   [nil "--prefix PREFIX" "Only export styles whose name starts with PREFIX, and remove PREFIX from their names"
-   :validate [seq "must not be empty"]])
+   :validate [seq "must not be empty"
+              #(not (str/starts-with? % "-")) "must not start with \"-\" (is the value missing?)"]])
 
 (def cli-options
   [;; Use flags instead of options with values for enable/disable functionality
@@ -195,10 +198,10 @@
      languages - Set of valid languages
      require-breakpoint - Boolean flag indicating if breakpoint is required in style names
      require-language - Boolean flag indicating if language is required in style names
-     prefix - Literal style name prefix to select and remove, or nil for every style
+     prefix - Optional. Literal style name prefix to select and remove; omitted or nil for every style
    Returns:
      {:ok result-map} on success, or {:error details} on failure"
-  [token filekey breakpoints languages require-breakpoint require-language prefix]
+  [token filekey breakpoints languages require-breakpoint require-language & [prefix]]
   (-> {:ok [token filekey breakpoints languages require-breakpoint require-language]}
       ;; 1. Fetch style information (only the styles under the prefix, renamed without it).
       ;;    Errors pass through, so that the API error or the no-match error is reported.
@@ -271,10 +274,10 @@
    Args:
      token - Figma API token
      filekey - Figma file ID
-     prefix - Literal style name prefix to select and remove, or nil for every style
+     prefix - Optional. Literal style name prefix to select and remove; omitted or nil for every style
    Returns:
      {:ok {:color-styles ... :style-count N}} or {:error ...}"
-  [token filekey prefix]
+  [token filekey & [prefix]]
   (-> {:ok [token filekey]}
       ;; Fetch raw color styles (only the styles under the prefix, renamed without it)
       (>>= (fn [[token filekey]]
